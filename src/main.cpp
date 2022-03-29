@@ -9,6 +9,14 @@
 #define rst 14
 #define dio0 2
 
+//Importing networking libraries
+#include <WiFi.h>
+#include "WiFiSTA.h"
+
+//Import http async webserver and filesystem emulation package
+#include "ESPAsyncWebServer.h"
+#include <SPIFFS.h>
+
 //CO2 Module MH-Z19B
 #include <Wire.h>
 #include <MHZ19.h>
@@ -22,6 +30,76 @@ HardwareSerial mySerial(1);
 int co2Value = 0; 
 int temp_mh;    //Temperatur des MH-Z19B
 
+// VARIABLES OF THE HTTP WEB SERVER
+AsyncWebServer server(80);
+
+// VARIABLES OF THE HTTP WEB wifiClient
+WiFiClient wifiClient;
+
+// Initialize SPIFFS
+void initSPIFFS() {
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An error has occurred while mounting SPIFFS");
+  }
+  Serial.println("SPIFFS mounted successfully");
+}
+
+// Read File from SPIFFS
+String readFile(fs::FS &fs, const char * path){
+  Serial.printf("Reading file: %s\r\n" , path);
+
+  File file = fs.open(path, "r");
+  if(!file || file.isDirectory()){
+    Serial.println("- failed to open file for reading");
+    return String();
+  }
+  
+  String fileContent;
+  while(file.available()){
+    fileContent = file.readStringUntil('\n');
+    break;     
+  }
+  file.close();
+  return fileContent;
+}
+
+// Write file to SPIFFS
+void writeFile(fs::FS &fs, const char * path, const char * message){
+  Serial.printf("Writing file: %s\r\n", path);
+
+  File file = fs.open(path, "w");
+  if(!file){
+    Serial.println("- failed to open file for writing");
+    return;
+  }
+  if(file.print(message)){
+    Serial.println("- file written");
+  } else {
+    Serial.println("- write failed");
+  }
+  file.close();
+}
+
+const char* specialphrasePath = "/specialphrase.txt";
+const char* wifissidPath = "/wifissid.txt";
+const char* wifipwdPath ="/wifipwd.txt";
+
+String specialphrase;
+String wifissid;
+String wifipwd ;
+
+String processor(const String& var){
+  //Serial.println(var);
+  if(var == "specialphrase"){
+    return readFile(SPIFFS, specialphrasePath);
+  }
+  
+  else if(var == "wifissid"){
+    return readFile(SPIFFS, wifissidPath);
+  }
+  return String();
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial);
@@ -33,6 +111,84 @@ void setup() {
     Serial.println("Starting LoRa failed!");
     while (1);
   }
+
+  initSPIFFS();
+  delay(1);
+
+  specialphrase = readFile(SPIFFS, specialphrasePath);
+  wifissid = readFile(SPIFFS, wifissidPath);
+  wifipwd = readFile(SPIFFS, wifipwdPath);
+
+  Serial.println(wifissid);
+  Serial.println(wifipwd);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifissid.c_str(), wifipwd.c_str());
+  int n = 0;
+  while ((WiFi.status() != WL_CONNECTED) && (n <= 10)){
+    Serial.println("Connecting to WiFi..");
+    delay(1000);
+    n++;
+  }
+
+  // Print ESP Local IP Address
+  Serial.println(WiFi.localIP());
+  server.begin();
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/index.html", String(), false, processor);
+  });
+
+  // Route to load style.css file
+  server.on("/index.css", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/index.css", "text/css");
+  });
+
+  server.on("/", HTTP_POST, [](AsyncWebServerRequest *request) {
+  int params = request->params();
+  for(int i=0;i<params;i++){
+    AsyncWebParameter* p = request->getParam(i);
+    if(p->isPost()){
+      // HTTP POST Special Phase
+      if (p->name() == "specialphrase") {
+        specialphrase = p->value().c_str();
+        Serial.print("Lora Wan special phrase: ");
+        Serial.println(specialphrase);
+        // Write file to save value
+        if(specialphrase.c_str() != ""){
+          writeFile(SPIFFS, specialphrasePath, specialphrase.c_str());  
+        }
+      }
+      // HTTP POST ip value
+      if (p->name() == "wifissid") {
+        wifissid = p->value().c_str();
+        Serial.print("Wifi SSID set to: ");
+        Serial.println(wifissid);
+        // Write file to save value
+        if(wifissid.c_str() != ""){
+          writeFile(SPIFFS, wifissidPath, wifissid.c_str());
+        }
+      }
+     // HTTP POST ip value
+      if (p->name() == "wifipassword") {
+        wifipwd = p->value().c_str();
+        Serial.print("Wifi password set to: ");
+        Serial.println(wifipwd);
+        // Write file to save value
+        if(wifipwd.c_str() != ""){
+          writeFile(SPIFFS, wifipwdPath, wifipwd.c_str());
+        }
+      }
+      if (p->name() == "reboot") {
+        Serial.println("Rebooting");
+        // Write file to save value
+        ESP.restart();
+      }
+      request->send(SPIFFS, "/index.html", String(), false, processor);
+    }
+  }
+  });
 
   char mhz19_version[4]; 
   mySerial.begin(MHZ19_BAUDRATE, MHZ19_PROTOCOL, RX_PIN, TX_PIN);
@@ -51,13 +207,14 @@ void loop() {
   
   // send packet
   LoRa.beginPacket();
-    LoRa.print("CO2-1;");
-    LoRa.print("Temp:");
+    LoRa.print("{sensor:CO2-1,");
+    LoRa.print("readings:{");
+    LoRa.print("temperature:");
     LoRa.print(temp_mh);
-    LoRa.print(";");
-    LoRa.print("ppm:");
+    LoRa.print(",");
+    LoRa.print("co2concentration:");
     LoRa.print(co2Value);
+    LoRa.print("}}");
   LoRa.endPacket();
   delay(2000);
-
 }
