@@ -17,6 +17,9 @@
 #include "ESPAsyncWebServer.h"
 #include <SPIFFS.h>
 
+//String to int conversion 
+#include <sstream>
+
 //CO2 Module MH-Z19B
 #include <Wire.h>
 #include <MHZ19.h>
@@ -80,18 +83,18 @@ void writeFile(fs::FS &fs, const char * path, const char * message){
   file.close();
 }
 
-const char* specialphrasePath = "/specialphrase.txt";
+const char* syncwordPath = "/syncword.txt";
 const char* wifissidPath = "/wifissid.txt";
 const char* wifipwdPath ="/wifipwd.txt";
 
-String specialphrase;
+String syncword;
 String wifissid;
 String wifipwd ;
 
 String processor(const String& var){
   //Serial.println(var);
   if(var == "specialphrase"){
-    return readFile(SPIFFS, specialphrasePath);
+    return readFile(SPIFFS, syncwordPath);
   }
   
   else if(var == "wifissid"){
@@ -103,24 +106,32 @@ String processor(const String& var){
 void setup() {
   Serial.begin(115200);
   while (!Serial);
-  //Initialize LoRa WAN Receiver
-  Serial.println("LoRa Sender");
-  LoRa.setPins(ss, rst, dio0);
-
-  if (!LoRa.begin(915E6)) {
-    Serial.println("Starting LoRa failed!");
-    while (1);
-  }
+  
 
   initSPIFFS();
   delay(1);
 
-  specialphrase = readFile(SPIFFS, specialphrasePath);
+  syncword = readFile(SPIFFS, syncwordPath);
   wifissid = readFile(SPIFFS, wifissidPath);
   wifipwd = readFile(SPIFFS, wifipwdPath);
 
   Serial.println(wifissid);
   Serial.println(wifipwd);
+
+  //Initialize LoRa WAN Receiver
+  Serial.println("LoRa Sender");
+  LoRa.setPins(ss, rst, dio0);
+
+  std::istringstream is(syncword.c_str());
+  int syncInt;
+  if (is >> syncInt){
+    LoRa.setSyncWord(syncInt);
+  }
+
+  if (!LoRa.begin(866E6)) {
+    Serial.println("Starting LoRa failed!");
+    while (1);
+  }
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifissid.c_str(), wifipwd.c_str());
@@ -152,12 +163,12 @@ void setup() {
     if(p->isPost()){
       // HTTP POST Special Phase
       if (p->name() == "specialphrase") {
-        specialphrase = p->value().c_str();
+        syncword= p->value().c_str();
         Serial.print("Lora Wan special phrase: ");
-        Serial.println(specialphrase);
+        Serial.println(syncword);
         // Write file to save value
-        if(specialphrase.c_str() != ""){
-          writeFile(SPIFFS, specialphrasePath, specialphrase.c_str());  
+        if(syncword.c_str() != ""){
+          writeFile(SPIFFS, syncwordPath, syncword.c_str());  
         }
       }
       // HTTP POST ip value
