@@ -125,6 +125,7 @@ void setup() {
   std::istringstream is(syncword.c_str());
   int syncInt;
   if (is >> syncInt){
+    Serial.println("Setting Sync Word");
     LoRa.setSyncWord(syncInt);
   }
 
@@ -218,14 +219,13 @@ void loop() {
   
   // send packet
   LoRa.beginPacket();
-    LoRa.print("{sensor:CO2-1,");
-    LoRa.print("readings:{");
-    LoRa.print("temperature:");
+    LoRa.print("{\"sensor\":\"CO2-1\",");
+    LoRa.print("\"temperature\":");
     LoRa.print(temp_mh);
     LoRa.print(",");
-    LoRa.print("co2concentration:");
+    LoRa.print("\"co2conc\":");
     LoRa.print(co2Value);
-    LoRa.print("}}");
+    LoRa.print("}");
   LoRa.endPacket();
   delay(2000);
 }
